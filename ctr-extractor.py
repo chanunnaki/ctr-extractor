@@ -74,15 +74,39 @@ def parse_directory(f_bin, start_sector, data_length):
 
 def extract_file(f_bin, start_sector, file_size, dest_path):
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    
+    # Check if the file is a CD-XA / STR file
+    # We read the first sector raw (2352 bytes) to check the submode flags
+    f_bin.seek(start_sector * BIN_SECTOR_SIZE)
+    first_sector_bytes = f_bin.read(BIN_SECTOR_SIZE)
+    
+    is_cdxa = False
+    ext = os.path.splitext(dest_path.upper())[1]
+    if ext in ('.XA', '.STR'):
+        is_cdxa = True
+    elif len(first_sector_bytes) >= 19:
+        submode = first_sector_bytes[18]
+        if (submode & 0x20) or (submode & 0x06):
+            is_cdxa = True
+            
+    num_sectors = (file_size + ISO_USER_DATA_SIZE - 1) // ISO_USER_DATA_SIZE
+    
     with open(dest_path, "wb") as f_out:
-        remaining = file_size
-        sector = start_sector
-        while remaining > 0:
-            sector_data = read_sector(f_bin, sector)
-            chunk_size = min(remaining, ISO_USER_DATA_SIZE)
-            f_out.write(sector_data[:chunk_size])
-            remaining -= chunk_size
-            sector += 1
+        if is_cdxa:
+            # CD-XA stream: 2336 bytes per sector (includes subheader, starts at offset 16)
+            for sector_idx in range(num_sectors):
+                f_bin.seek((start_sector + sector_idx) * BIN_SECTOR_SIZE + 16)
+                sector_data = f_bin.read(2336)
+                f_out.write(sector_data)
+        else:
+            # Standard file: 2048 bytes per sector (user data, starts at offset 24)
+            remaining = file_size
+            for sector_idx in range(num_sectors):
+                f_bin.seek((start_sector + sector_idx) * BIN_SECTOR_SIZE + 24)
+                sector_data = f_bin.read(ISO_USER_DATA_SIZE)
+                chunk_size = min(remaining, ISO_USER_DATA_SIZE)
+                f_out.write(sector_data[:chunk_size])
+                remaining -= chunk_size
 
 def main():
     if len(sys.argv) < 2:
